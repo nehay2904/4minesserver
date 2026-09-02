@@ -4,7 +4,7 @@ const path = require('path');
 const multer = require('multer');
 const Compliance = require('../models/Compliance');
 const User = require('../models/User');
-const { protect, adminOnly, allow, mineScope } = require('../middleware/auth');
+const { protect, adminOnly, mineScope } = require('../middleware/auth');
 
 // ---------- file upload ----------
 const storage = multer.diskStorage({
@@ -12,16 +12,13 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) =>
     cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`),
 });
-const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
-});
+const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 /**
  * Visibility:
  *  admin      -> all (optional ?mine=)
- *  supervisor -> their mine, optionally narrowed to their reportees
- *  user       -> only what is assigned to them
+ *  supervisor -> their mine, narrowed to their reportees
+ *  user       -> only assigned to them
  */
 const scopeFilter = async (req) => {
   if (req.user.role === 'user') return { assignedTo: req.user._id };
@@ -54,7 +51,7 @@ router.get('/', protect, async (req, res) => {
     }
 
     const compliances = await Compliance.find(filter)
-      .populate('mine', 'name code type')
+      .populate('mines', 'name code type')
       .populate('assignedTo', 'name email dept')
       .sort({ dueDate: 1, category: 1 });
 
@@ -64,7 +61,7 @@ router.get('/', protect, async (req, res) => {
   }
 });
 
-// GET /api/compliances/stats — dashboard counters
+// GET /api/compliances/stats
 router.get('/stats', protect, async (req, res) => {
   try {
     const filter = await scopeFilter(req);
@@ -93,18 +90,18 @@ router.get('/stats', protect, async (req, res) => {
 router.get('/:id', protect, async (req, res) => {
   try {
     const c = await Compliance.findById(req.params.id)
-      .populate('mine', 'name code type')
+      .populate('mines', 'name code type')
       .populate('assignedTo', 'name email dept');
     if (!c) return res.status(404).json({ message: 'Compliance not found' });
 
     if (req.user.role === 'user' && String(c.assignedTo?._id) !== String(req.user._id)) {
       return res.status(403).json({ message: 'Access denied' });
     }
-    if (
-      req.user.role === 'supervisor' &&
-      String(c.mine?._id) !== String(req.user.mine)
-    ) {
-      return res.status(403).json({ message: 'Access denied' });
+    if (req.user.role === 'supervisor') {
+      const mineIds = c.mines.map((m) => String(m._id || m));
+      if (!mineIds.includes(String(req.user.mine))) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
     }
     res.json(c);
   } catch (err) {
@@ -122,7 +119,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
   }
 });
 
-// POST /api/compliances/bulk — seed a mine's register in one call
+// POST /api/compliances/bulk
 router.post('/bulk', protect, adminOnly, async (req, res) => {
   try {
     const { items } = req.body;
@@ -159,14 +156,14 @@ router.patch('/:id/assign', protect, adminOnly, async (req, res) => {
 
     const user = await User.findById(assignedTo);
     if (!user) return res.status(404).json({ message: 'User not found' });
-    if (user.role !== 'admin' && String(user.mine) !== String(c.mine)) {
-      return res
-        .status(400)
-        .json({ message: 'User does not belong to this compliance\u2019s mine' });
+
+    // Check user belongs to at least one of the compliance's mines
+    const mineIds = c.mines.map((m) => String(m._id || m));
+    if (user.role !== 'admin' && !mineIds.includes(String(user.mine))) {
+      return res.status(400).json({ message: "User does not belong to this compliance's mine" });
     }
 
     c.assignedTo = assignedTo;
-    // reset escalation trail on reassignment
     c.lastReminderAt = null;
     c.supervisorEscalatedAt = null;
     c.adminEscalatedAt = null;
@@ -178,40 +175,35 @@ router.patch('/:id/assign', protect, adminOnly, async (req, res) => {
   }
 });
 
-// PATCH /api/compliances/:id/complete — assigned user (or admin) uploads proof
-router.patch(
-  '/:id/complete',
-  protect,
-  upload.array('proofs', 5),
-  async (req, res) => {
-    try {
-      const c = await Compliance.findById(req.params.id);
-      if (!c) return res.status(404).json({ message: 'Compliance not found' });
+// PATCH /api/compliances/:id/complete
+router.patch('/:id/complete', protect, upload.array('proofs', 5), async (req, res) => {
+  try {
+    const c = await Compliance.findById(req.params.id);
+    if (!c) return res.status(404).json({ message: 'Compliance not found' });
 
-      const isOwner = String(c.assignedTo) === String(req.user._id);
-      if (!isOwner && req.user.role !== 'admin') {
-        return res.status(403).json({ message: 'Access denied' });
-      }
-
-      (req.files || []).forEach((f) =>
-        c.proofs.push({
-          fileName: f.originalname,
-          filePath: path.join('uploads', f.filename),
-          uploadedBy: req.user._id,
-        })
-      );
-
-      if (req.body.driveLink) c.driveLink = req.body.driveLink;
-      c.status = 'Completed';
-      c.completedDate = new Date();
-      await c.save();
-
-      res.json(c);
-    } catch (err) {
-      res.status(500).json({ message: err.message });
+    const isOwner = String(c.assignedTo) === String(req.user._id);
+    if (!isOwner && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Access denied' });
     }
+
+    (req.files || []).forEach((f) =>
+      c.proofs.push({
+        fileName: f.originalname,
+        filePath: path.join('uploads', f.filename),
+        uploadedBy: req.user._id,
+      })
+    );
+
+    if (req.body.driveLink) c.driveLink = req.body.driveLink;
+    c.status = 'Completed';
+    c.completedDate = new Date();
+    await c.save();
+
+    res.json(c);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
-);
+});
 
 // DELETE /api/compliances/:id
 router.delete('/:id', protect, adminOnly, async (req, res) => {
