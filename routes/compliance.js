@@ -36,12 +36,11 @@ const scopeFilter = async (req) => {
 router.get('/', protect, async (req, res) => {
   try {
     const filter = await scopeFilter(req);
-    const { category, subCategory, status, assignedTo, search } = req.query;
+    const { category, subCategory, status, search } = req.query;
 
     if (category) filter.category = category;
     if (subCategory) filter.subCategory = subCategory;
     if (status) filter.status = status;
-    if (assignedTo && req.user.role !== 'user') filter.assignedTo = assignedTo;
     if (search) {
       filter.$or = [
         { title: { $regex: search, $options: 'i' } },
@@ -94,14 +93,15 @@ router.get('/:id', protect, async (req, res) => {
       .populate('assignedTo', 'name email dept');
     if (!c) return res.status(404).json({ message: 'Compliance not found' });
 
-    if (req.user.role === 'user' && String(c.assignedTo?._id) !== String(req.user._id)) {
-      return res.status(403).json({ message: 'Access denied' });
+    if (req.user.role === 'user') {
+      const ids = c.assignedTo.map((u) => String(u._id));
+      if (!ids.includes(String(req.user._id)))
+        return res.status(403).json({ message: 'Access denied' });
     }
     if (req.user.role === 'supervisor') {
       const mineIds = c.mines.map((m) => String(m._id || m));
-      if (!mineIds.includes(String(req.user.mine))) {
+      if (!mineIds.includes(String(req.user.mine)))
         return res.status(403).json({ message: 'Access denied' });
-      }
     }
     res.json(c);
   } catch (err) {
@@ -123,9 +123,8 @@ router.post('/', protect, adminOnly, async (req, res) => {
 router.post('/bulk', protect, adminOnly, async (req, res) => {
   try {
     const { items } = req.body;
-    if (!Array.isArray(items) || !items.length) {
+    if (!Array.isArray(items) || !items.length)
       return res.status(400).json({ message: 'items[] is required' });
-    }
     const created = await Compliance.insertMany(items, { ordered: false });
     res.status(201).json({ inserted: created.length });
   } catch (err) {
@@ -147,23 +146,28 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
   }
 });
 
-// PATCH /api/compliances/:id/assign
+// PATCH /api/compliances/:id/assign — assign multiple users
 router.patch('/:id/assign', protect, adminOnly, async (req, res) => {
   try {
-    const { assignedTo } = req.body;
+    const { assignedTo } = req.body; // array of user IDs
+    const ids = Array.isArray(assignedTo) ? assignedTo : [assignedTo];
+
     const c = await Compliance.findById(req.params.id);
     if (!c) return res.status(404).json({ message: 'Compliance not found' });
 
-    const user = await User.findById(assignedTo);
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    // Check user belongs to at least one of the compliance's mines
+    // Validate each user belongs to at least one of the compliance's mines
     const mineIds = c.mines.map((m) => String(m._id || m));
-    if (user.role !== 'admin' && !mineIds.includes(String(user.mine))) {
-      return res.status(400).json({ message: "User does not belong to this compliance's mine" });
+    for (const uid of ids) {
+      const user = await User.findById(uid);
+      if (!user) return res.status(404).json({ message: `User ${uid} not found` });
+      if (user.role !== 'admin' && !mineIds.includes(String(user.mine))) {
+        return res.status(400).json({
+          message: `${user.name} does not belong to this compliance's mine`,
+        });
+      }
     }
 
-    c.assignedTo = assignedTo;
+    c.assignedTo = ids;
     c.lastReminderAt = null;
     c.supervisorEscalatedAt = null;
     c.adminEscalatedAt = null;
@@ -175,16 +179,16 @@ router.patch('/:id/assign', protect, adminOnly, async (req, res) => {
   }
 });
 
-// PATCH /api/compliances/:id/complete
+// PATCH /api/compliances/:id/complete — any assigned user uploads proof
 router.patch('/:id/complete', protect, upload.array('proofs', 5), async (req, res) => {
   try {
     const c = await Compliance.findById(req.params.id);
     if (!c) return res.status(404).json({ message: 'Compliance not found' });
 
-    const isOwner = String(c.assignedTo) === String(req.user._id);
-    if (!isOwner && req.user.role !== 'admin') {
+    const assignedIds = c.assignedTo.map((u) => String(u._id || u));
+    const isOwner = assignedIds.includes(String(req.user._id));
+    if (!isOwner && req.user.role !== 'admin')
       return res.status(403).json({ message: 'Access denied' });
-    }
 
     (req.files || []).forEach((f) =>
       c.proofs.push({
