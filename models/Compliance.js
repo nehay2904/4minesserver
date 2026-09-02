@@ -12,13 +12,15 @@ const proofSchema = new mongoose.Schema(
 
 const complianceSchema = new mongoose.Schema(
   {
-    complianceId: { type: String, required: true, trim: true },
-    mine: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Mine',
-      required: true,
-      index: true,
-    },
+    complianceId: { type: String, required: true, unique: true, trim: true },
+
+    // Array of mines this compliance applies to
+    mines: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Mine',
+      },
+    ],
 
     // Register columns
     category: {
@@ -46,18 +48,17 @@ const complianceSchema = new mongoose.Schema(
       enum: ['Notice', 'Return', 'Record', ''],
       default: '',
     },
-    title: { type: String, required: true },
-    detail: { type: String, default: '' },
-    act: { type: String, default: '' },
-    regulationRef: { type: String, default: '' },
-    formNo: { type: String, default: '' },
-    frequency: { type: String, default: '' },
+    title:               { type: String, required: true },
+    detail:              { type: String, default: '' },
+    act:                 { type: String, default: '' },
+    regulationRef:       { type: String, default: '' },
+    formNo:              { type: String, default: '' },
+    frequency:           { type: String, default: '' },
     monitoringAuthority: { type: String, default: '' },
-    signerRole: { type: String, default: '' },
-    mode: { type: String, default: '' },
-    remarks: { type: String, default: '' },
+    signerRole:          { type: String, default: '' },
+    mode:                { type: String, default: '' },
+    remarks:             { type: String, default: '' },
 
-    // Greenfield sites use this; working mines default to 'Applicable Now'
     applicabilityStatus: {
       type: String,
       enum: [
@@ -70,27 +71,27 @@ const complianceSchema = new mongoose.Schema(
     },
 
     // Assignment + tracking
-    assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-    dueDate: { type: Date, default: null },
-    alertDate: { type: Date, default: null },
+    assignedTo:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    dueDate:      { type: Date, default: null },
+    alertDate:    { type: Date, default: null },
     status: {
       type: String,
       enum: ['Pending', 'Upcoming', 'Due This Month', 'Overdue', 'Completed'],
       default: 'Pending',
     },
     completedDate: { type: Date, default: null },
-    proofs: [proofSchema],
-    driveLink: { type: String, default: null },
+    proofs:        [proofSchema],
+    driveLink:     { type: String, default: null },
 
-    // Escalation bookkeeping (used by the scheduler so mails aren't re-sent)
-    lastReminderAt: { type: Date, default: null },
+    // Escalation bookkeeping
+    lastReminderAt:        { type: Date, default: null },
     supervisorEscalatedAt: { type: Date, default: null },
-    adminEscalatedAt: { type: Date, default: null },
+    adminEscalatedAt:      { type: Date, default: null },
   },
   { timestamps: true }
 );
 
-complianceSchema.index({ mine: 1, complianceId: 1 }, { unique: true });
+complianceSchema.index({ mines: 1, status: 1 });
 complianceSchema.index({ assignedTo: 1, status: 1 });
 
 module.exports = mongoose.model('Compliance', complianceSchema);
