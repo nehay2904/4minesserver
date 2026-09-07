@@ -32,12 +32,16 @@ const adminOnly = allow('admin');
  *  admin      -> everything (optionally filtered by ?mine=)
  *  supervisor -> only their own mine
  *  user       -> only their own mine (routes further narrow to assignedTo)
+ *
+ * NOTE: compliance docs store an array field `mines: [ObjectId]`.
+ * Matching a single ObjectId against an array field with `{ mines: id }`
+ * makes Mongo match any doc whose array *contains* that id.
  */
 const mineScope = (req) => {
   if (req.user.role === 'admin') {
-    return req.query.mine ? { mine: req.query.mine } : {};
+    return req.query.mine ? { mines: req.query.mine } : {};
   }
-  return { mine: req.user.mine };
+  return { mines: req.user.mine };
 };
 
 module.exports = { protect, allow, adminOnly, mineScope };
