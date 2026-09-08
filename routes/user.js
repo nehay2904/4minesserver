@@ -37,17 +37,15 @@ router.get('/', protect, allow('admin', 'supervisor'), async (req, res) => {
 /**
  * GET /api/users/hierarchy
  *  admin      -> full org tree across all mines
- *  supervisor -> own slice: their reporting officer above + their reportees below
+ *  supervisor -> own slice: their reporting officer(s) above + their reportees below
  */
 router.get('/hierarchy', protect, allow('admin', 'supervisor'), async (req, res) => {
   try {
     if (req.user.role === 'supervisor') {
       const [above, below] = await Promise.all([
-        req.user.reportsTo
-          ? User.findById(req.user.reportsTo)
-              .select('name email role dept designation')
-              .populate('mine', 'name code')
-          : null,
+        User.find({ _id: { $in: req.user.reportsTo || [] } })
+          .select('name email role dept designation')
+          .populate('mine', 'name code'),
         User.find({ reportsTo: req.user._id })
           .select('name email role dept designation')
           .populate('mine', 'name code')
@@ -61,7 +59,8 @@ router.get('/hierarchy', protect, allow('admin', 'supervisor'), async (req, res)
       return res.json({ scope: 'supervisor', above, self, below });
     }
 
-    // Admin: build a nested tree per mine
+    // Admin: build a nested tree per mine. A user with multiple supervisors
+    // appears under each of them.
     const filter = req.query.mine ? { mine: req.query.mine } : {};
     const users = await User.find(filter)
       .select('name email role dept designation mine reportsTo isActive')
@@ -72,9 +71,12 @@ router.get('/hierarchy', protect, allow('admin', 'supervisor'), async (req, res)
     const roots = [];
 
     byId.forEach((node) => {
-      const parentId = node.reportsTo ? String(node.reportsTo) : null;
-      if (parentId && byId.has(parentId)) byId.get(parentId).reportees.push(node);
-      else roots.push(node);
+      const parentIds = (node.reportsTo || []).map(String).filter((id) => byId.has(id));
+      if (parentIds.length) {
+        parentIds.forEach((pid) => byId.get(pid).reportees.push(node));
+      } else {
+        roots.push(node);
+      }
     });
 
     res.json({ scope: 'admin', tree: roots });
@@ -94,7 +96,7 @@ router.get('/:id', protect, allow('admin', 'supervisor'), async (req, res) => {
 
     if (
       req.user.role === 'supervisor' &&
-      String(user.reportsTo?._id) !== String(req.user._id)
+      !(user.reportsTo || []).some((r) => String(r._id) === String(req.user._id))
     ) {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -152,7 +154,7 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
         message: `Cannot delete: ${assigned} open compliance(s) assigned. Reassign them first.`,
       });
     }
-    await User.updateMany({ reportsTo: req.params.id }, { reportsTo: null });
+    await User.updateMany({ reportsTo: req.params.id }, { $pull: { reportsTo: req.params.id } });
     await User.findByIdAndDelete(req.params.id);
     res.json({ message: 'User deleted' });
   } catch (err) {

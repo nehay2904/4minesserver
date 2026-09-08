@@ -78,7 +78,7 @@ const refreshStatuses = async () => {
 /**
  * Escalation timeline:
  *   due date        -> reminder to assigned user
- *   +1 day overdue  -> escalate to that user's supervisor (reportsTo)
+ *   +1 day overdue  -> escalate to that user's supervisor(s) (reportsTo)
  *   +3 days overdue -> escalate to admin(s)
  */
 const runAlerts = async () => {
@@ -113,15 +113,16 @@ const runAlerts = async () => {
       await c.save();
     }
 
-    // +1 day — escalate to supervisor
+    // +1 day — escalate to supervisor(s)
     if (overdue >= 1 && !c.supervisorEscalatedAt) {
-      const supervisor = owner.reportsTo
-        ? await User.findById(owner.reportsTo).select('name email isActive')
-        : null;
-      if (supervisor && supervisor.isActive) {
+      const supervisors = (owner.reportsTo || []).length
+        ? await User.find({ _id: { $in: owner.reportsTo }, isActive: true }).select('email')
+        : [];
+      const supervisorEmails = supervisors.map((s) => s.email);
+      if (supervisorEmails.length) {
         await dispatch({
           compliance: c,
-          to: [supervisor.email],
+          to: supervisorEmails,
           alertType: 'escalation-supervisor',
           heading: `Overdue Compliance — ${overdue} day(s)`,
           note: `${owner.name} has not completed this compliance. It is now ${overdue} day(s) overdue.`,

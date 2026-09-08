@@ -56,6 +56,8 @@ router.get('/', protect, async (req, res) => {
     const compliances = await Compliance.find(filter)
       .populate('mines', 'name code type')
       .populate('assignedTo', 'name email dept')
+      .populate('completionHistory.completedBy', 'name email')
+      .populate('completedBy', 'name email')
       .sort({ dueDate: 1, category: 1 });
 
     res.json(compliances);
@@ -96,7 +98,9 @@ router.get('/:id', protect, async (req, res) => {
   try {
     const c = await Compliance.findById(req.params.id)
       .populate('mines', 'name code type')
-      .populate('assignedTo', 'name email dept');
+      .populate('assignedTo', 'name email dept')
+      .populate('completionHistory.completedBy', 'name email')
+      .populate('completedBy', 'name email');
     if (!c) return res.status(404).json({ message: 'Compliance not found' });
 
     if (req.user.role === 'user') {
@@ -228,6 +232,7 @@ router.patch('/:id/complete', protect, upload.array('proofs', 5), async (req, re
       if (req.body.driveLink) c.driveLink = req.body.driveLink;
       c.status = 'Completed';
       c.completedDate = new Date();
+      c.completedBy = req.user._id;
       c.lastCompletedDate = new Date();
     }
 

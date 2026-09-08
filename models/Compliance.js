@@ -98,6 +98,7 @@ const complianceSchema = new mongoose.Schema(
       default: null,
     },
     completedDate: { type: Date, default: null },
+    completedBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     proofs:        [proofSchema],
     driveLink:     { type: String, default: null },
 

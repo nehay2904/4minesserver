@@ -33,8 +33,8 @@ const userSchema = new mongoose.Schema(
       default: '',
     },
     designation: { type: String, default: '' },
-    // Escalation chain: user -> supervisor -> admin
-    reportsTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    // Escalation chain: user -> supervisor(s) -> admin. A user can report to more than one supervisor.
+    reportsTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
