@@ -76,7 +76,7 @@ const complianceSchema = new mongoose.Schema(
     alertDate:    { type: Date, default: null },
     status: {
       type: String,
-      enum: ['Pending', 'Upcoming', 'Due This Month', 'Overdue', 'Completed'],
+      enum: ['Pending', 'Upcoming', 'Due This Month', 'Overdue', 'Completed', null],
       default: 'Pending',
     },
     completedDate: { type: Date, default: null },
