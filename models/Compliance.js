@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { deriveRecurrenceMonths } = require('../utils/recurrence');
 
 const proofSchema = new mongoose.Schema(
   {
@@ -6,6 +7,23 @@ const proofSchema = new mongoose.Schema(
     filePath: { type: String },
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     uploadedAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
+const completionHistorySchema = new mongoose.Schema(
+  {
+    cycleDueDate: { type: Date },
+    completedDate: { type: Date },
+    completedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    proofs: [
+      {
+        fileName: { type: String },
+        filePath: { type: String },
+        uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      },
+    ],
+    driveLink: { type: String },
   },
   { _id: false }
 );
@@ -72,12 +90,12 @@ const complianceSchema = new mongoose.Schema(
 
     // Assignment + tracking
     assignedTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    dueDate:      { type: Date, default: null },
-    alertDate:    { type: Date, default: null },
+    dueDate:   { type: Date, default: null },
+    alertDate: { type: Date, default: null },
     status: {
       type: String,
       enum: ['Pending', 'Upcoming', 'Due This Month', 'Overdue', 'Completed', null],
-      default: 'Pending',
+      default: null,
     },
     completedDate: { type: Date, default: null },
     proofs:        [proofSchema],
@@ -87,11 +105,26 @@ const complianceSchema = new mongoose.Schema(
     lastReminderAt:        { type: Date, default: null },
     supervisorEscalatedAt: { type: Date, default: null },
     adminEscalatedAt:      { type: Date, default: null },
+
+    // Recurrence tracking
+    recurrenceMonths:   { type: Number, default: null }, // 1/3/6/12 for recurring returns; null otherwise
+    lastCompletedDate:  { type: Date, default: null },
+    completionHistory:  [completionHistorySchema],
   },
   { timestamps: true }
 );
 
 complianceSchema.index({ mines: 1, status: 1 });
 complianceSchema.index({ assignedTo: 1, status: 1 });
+
+complianceSchema.pre('save', function (next) {
+  if (
+    (this.recurrenceMonths === null || this.recurrenceMonths === undefined) &&
+    this.subCategory === 'Return'
+  ) {
+    this.recurrenceMonths = deriveRecurrenceMonths(this.frequency, this.subCategory);
+  }
+  next();
+});
 
 module.exports = mongoose.model('Compliance', complianceSchema);

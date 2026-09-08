@@ -5,6 +5,7 @@ const multer = require('multer');
 const Compliance = require('../models/Compliance');
 const User = require('../models/User');
 const { protect, adminOnly, mineScope } = require('../middleware/auth');
+const { computeNextDueDate } = require('../utils/recurrence');
 
 // ---------- file upload ----------
 const storage = multer.diskStorage({
@@ -17,7 +18,8 @@ const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 /**
  * Visibility:
  *  admin      -> all (optional ?mine=)
- *  supervisor -> their mine, narrowed to their reportees
+ *  supervisor -> their mine, narrowed to their reportees (Managers with no
+ *                reportees see the whole mine)
  *  user       -> only assigned to them
  */
 const scopeFilter = async (req) => {
@@ -27,7 +29,9 @@ const scopeFilter = async (req) => {
 
   if (req.user.role === 'supervisor') {
     const reportees = await User.find({ reportsTo: req.user._id }).select('_id');
-    filter.assignedTo = { $in: [...reportees.map((r) => r._id), req.user._id] };
+    if (reportees.length) {
+      filter.assignedTo = { $in: [...reportees.map((r) => r._id), req.user._id] };
+    }
   }
   return filter;
 };
@@ -70,7 +74,9 @@ router.get('/stats', protect, async (req, res) => {
     ]);
 
     const stats = { Pending: 0, Upcoming: 0, 'Due This Month': 0, Overdue: 0, Completed: 0 };
-    rows.forEach((r) => (stats[r._id] = r.count));
+    rows.forEach((r) => {
+      if (r._id) stats[r._id] = r.count;
+    });
     stats.total = Object.values(stats).reduce((a, b) => a + b, 0);
 
     const byCategory = await Compliance.aggregate([
@@ -155,7 +161,6 @@ router.patch('/:id/assign', protect, adminOnly, async (req, res) => {
     const c = await Compliance.findById(req.params.id);
     if (!c) return res.status(404).json({ message: 'Compliance not found' });
 
-    // Validate each user belongs to at least one of the compliance's mines
     const mineIds = c.mines.map((m) => String(m._id || m));
     for (const uid of ids) {
       const user = await User.findById(uid);
@@ -190,19 +195,43 @@ router.patch('/:id/complete', protect, upload.array('proofs', 5), async (req, re
     if (!isOwner && req.user.role !== 'admin')
       return res.status(403).json({ message: 'Access denied' });
 
-    (req.files || []).forEach((f) =>
-      c.proofs.push({
-        fileName: f.originalname,
-        filePath: path.join('uploads', f.filename),
-        uploadedBy: req.user._id,
-      })
-    );
+    const newProofs = (req.files || []).map((f) => ({
+      fileName: f.originalname,
+      filePath: path.join('uploads', f.filename),
+      uploadedBy: req.user._id,
+    }));
 
-    if (req.body.driveLink) c.driveLink = req.body.driveLink;
-    c.status = 'Completed';
-    c.completedDate = new Date();
+    const isRecurring = !!c.recurrenceMonths && !!c.dueDate;
+
+    if (isRecurring) {
+      // Archive this cycle, then roll forward to the next due date and reset to Pending.
+      c.completionHistory.push({
+        cycleDueDate: c.dueDate,
+        completedDate: new Date(),
+        completedBy: req.user._id,
+        proofs: [...c.proofs, ...newProofs],
+        driveLink: req.body.driveLink || c.driveLink || '',
+      });
+
+      c.dueDate = computeNextDueDate(c.dueDate, c.recurrenceMonths);
+      c.status = 'Pending';
+      c.completedDate = null;
+      c.lastCompletedDate = new Date();
+      c.proofs = [];          // fresh cycle
+      c.driveLink = '';
+      c.lastReminderAt = null;
+      c.supervisorEscalatedAt = null;
+      c.adminEscalatedAt = null;
+    } else {
+      // One-time compliance: normal completion.
+      newProofs.forEach((p) => c.proofs.push(p));
+      if (req.body.driveLink) c.driveLink = req.body.driveLink;
+      c.status = 'Completed';
+      c.completedDate = new Date();
+      c.lastCompletedDate = new Date();
+    }
+
     await c.save();
-
     res.json(c);
   } catch (err) {
     res.status(500).json({ message: err.message });
