@@ -7,7 +7,6 @@ const NAME = 'Neha Suresh Yednurwar';
 const EMAIL = 'neha.yednurwar@jindalpower.com';
 const PASSWORD = 'S#27nm12@';
 // --------------------------
-
 (async () => {
   try {
     await mongoose.connect(process.env.MONGO_URI);

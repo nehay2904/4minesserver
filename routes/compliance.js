@@ -242,7 +242,42 @@ router.patch('/:id/complete', protect, upload.array('proofs', 5), async (req, re
     res.status(500).json({ message: err.message });
   }
 });
+// PATCH /api/compliances/:id/upload-record
+// Appends proof files to a Record compliance without changing its status.
+// Any assigned user or admin can call this; unlimited uploads.
+router.patch('/:id/upload-record', protect, upload.array('proofs', 20), async (req, res) => {
+  try {
+    const c = await Compliance.findById(req.params.id);
+    if (!c) return res.status(404).json({ message: 'Compliance not found' });
 
+    // Only Records use this route
+    if (c.subCategory !== 'Record')
+      return res.status(400).json({ message: 'This route is only for Record compliances' });
+
+    const assignedIds = c.assignedTo.map((u) => String(u._id || u));
+    const isOwner = assignedIds.includes(String(req.user._id));
+    if (!isOwner && req.user.role !== 'admin')
+      return res.status(403).json({ message: 'Access denied' });
+
+    if (!req.files || req.files.length === 0)
+      return res.status(400).json({ message: 'No files uploaded' });
+
+    const newProofs = req.files.map((f) => ({
+      fileName: f.originalname,
+      filePath: path.join('uploads', f.filename),
+      uploadedBy: req.user._id,
+    }));
+
+    newProofs.forEach((p) => c.proofs.push(p));
+    await c.save();
+
+    // Return populated so frontend gets uploadedBy.name
+    await c.populate('proofs.uploadedBy', 'name');
+    res.json(c);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 // DELETE /api/compliances/:id
 router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
