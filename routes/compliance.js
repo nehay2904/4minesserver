@@ -278,6 +278,33 @@ router.patch('/:id/upload-record', protect, upload.array('proofs', 20), async (r
     res.status(500).json({ message: err.message });
   }
 });
+
+// PATCH /api/compliances/:id/upload-notice
+router.patch('/:id/upload-notice', protect, upload.array('proofs', 20), async (req, res) => {
+  try {
+    const c = await Compliance.findById(req.params.id);
+    if (!c) return res.status(404).json({ message: 'Compliance not found' });
+    if (c.subCategory !== 'Notice')
+      return res.status(400).json({ message: 'This route is only for Notice compliances' });
+    const assignedIds = c.assignedTo.map((u) => String(u._id || u));
+    const isOwner = assignedIds.includes(String(req.user._id));
+    if (!isOwner && req.user.role !== 'admin')
+      return res.status(403).json({ message: 'Access denied' });
+    if (!req.files || req.files.length === 0)
+      return res.status(400).json({ message: 'No files uploaded' });
+    const newProofs = req.files.map((f) => ({
+      fileName: f.originalname,
+      filePath: path.join('uploads', f.filename),
+      uploadedBy: req.user._id,
+    }));
+    newProofs.forEach((p) => c.proofs.push(p));
+    await c.save();
+    await c.populate('proofs.uploadedBy', 'name');
+    res.json(c);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 // DELETE /api/compliances/:id
 router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
