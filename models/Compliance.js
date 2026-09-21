@@ -63,10 +63,14 @@ const complianceSchema = new mongoose.Schema(
     },
     subCategory: {
       type: String,
-      enum: ['Notice', 'Return', 'Record', ''],
+      enum: ['Notice', 'Return', 'Record', 'License', ''],
       default: '',
     },
     title:               { type: String, required: true },
+    // Licence-only fields (subCategory === 'License')
+    licenseNo:           { type: String, default: '' },
+    validFrom:           { type: Date, default: null },
+    validUpto:           { type: Date, default: null },
     detail:              { type: String, default: '' },
     act:                 { type: String, default: '' },
     regulationRef:       { type: String, default: '' },
